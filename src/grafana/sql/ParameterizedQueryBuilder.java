@@ -12,19 +12,28 @@ public class ParameterizedQueryBuilder {
     private static final String VAR_PARAM_TEMPLATE = "$param";
     private static final String GRAFANA_QUOTED_VAR_REGEX = "('\\$(\\d|\\w|_)+')|('\\$\\{.*?\\}')|(\"\\$(\\d|\\w|_)+\")|(\"\\$\\{.*?\\}\")";
     private static final String GRAFANA_VAR_REGEX = "(\\$(\\d|\\w|_)+)|(\\$\\{.*?\\})";
+    private static final int GRAFANA_VAR_TYPE1_GROUP = 1;
+    private static final int GRAFANA_VAR_TYPE2_GROUP = 3;
+    private static final int TOTAL_GRAFANA_VAR_GROUPS = 3;
+
+
+    private static final String QUOTED_STRING_REGEX = "(\"(.+?)\")|('(.+?)')";
+    private static final int DOUBLE_QUOTE_GROUP = 1;
+    private static final int SINGLE_QUOTE_GROUP = 3;
+    private static final int TOTAL_QUOTED_STRING_GROUPS = 4;
 
 
     public static ParameterizedQuery build(String queryTemplate, String rawQuery) throws QueryMisMatch {
         // In Grafana, a variable can coexist with a hardcoded parameter (ie: '${__from:date:YYYY-MM-DD} 00:00:00')
         // hence this function templates the whole parameter in order to make valid parameterized query
-        queryTemplate = templateParamWGrafanaVariables(queryTemplate);
+        String normalizedQueryTemplate = templateParamWGrafanaVariables(queryTemplate);
 
-        String queryUpToVarStart = queryTemplate;
+        String queryUpToVarStart = normalizedQueryTemplate;
         String rawQueryUpToVarStart = rawQuery;
 
         // Pattern matcher to get query string before the first grafana variable
         Pattern toVarStart = Pattern.compile("([^\\$]+(?=\"\\$))|([^\\$]+(?='\\$))|([^\\$]+(?=\\$))");
-        Matcher matchToVarStart = toVarStart.matcher(queryTemplate);
+        Matcher matchToVarStart = toVarStart.matcher(normalizedQueryTemplate);
 
         if (matchToVarStart.find()) {
             queryUpToVarStart = matchToVarStart.group();
@@ -38,24 +47,24 @@ public class ParameterizedQueryBuilder {
         }
         StringBuilder preparedQueryBuilder = new StringBuilder().append(queryUpToVarStart);
 
-        String queryFromVarStart = queryTemplate.substring(queryUpToVarStart.length());
+        String queryFromVarStart = normalizedQueryTemplate.substring(queryUpToVarStart.length());
         String rawQueryFromVarStart = rawQuery.substring(queryUpToVarStart.length());
-        queryTemplate = queryFromVarStart;
+        normalizedQueryTemplate = queryFromVarStart;
         rawQuery = rawQueryFromVarStart;
         Pattern varPattern = Pattern.compile(GRAFANA_QUOTED_VAR_REGEX + "|" + GRAFANA_VAR_REGEX);
-        Matcher varMatch = varPattern.matcher(queryTemplate);
-        List<String> parameters = new ArrayList<>();
+        Matcher varMatch = varPattern.matcher(normalizedQueryTemplate);
+        List<List<String>> parameters = new ArrayList<>();
         while(varMatch.find()) {
             String currentVar = varMatch.group();
             // Pattern matcher to get query string between grafana current variable and next variable
-            matchToVarStart = toVarStart.matcher(queryTemplate.substring(currentVar.length()));
+            matchToVarStart = toVarStart.matcher(normalizedQueryTemplate.substring(currentVar.length()));
 
             String matchToLookBehindRawQuery;
             if (matchToVarStart.find()) {
                 matchToLookBehindRawQuery = matchToVarStart.group();
             } else {
                 // If next variable does not exist get query string after the current variable
-                matchToLookBehindRawQuery = queryTemplate.substring(currentVar.length());
+                matchToLookBehindRawQuery = normalizedQueryTemplate.substring(currentVar.length());
             }
             String currentVarInput;
             if (matchToLookBehindRawQuery.isEmpty()) {
@@ -72,6 +81,9 @@ public class ParameterizedQueryBuilder {
             // Grafana variable input can be multivalued, which are separated by comma by default
             String[] varValues = splitByComma(currentVarInput);
             List<String> preparedStatementPlaceHolders = new ArrayList<>();
+            // Group the inputs of a variable together in a List
+            // This allows to map the inputs with variables correctly
+            List<String> parameterGroup = new ArrayList<>();
             for (String v : varValues) {
                 String param = unQuoteString(v);
                 // This makes sure to add the parameters only if the inputs are safe
@@ -79,22 +91,58 @@ public class ParameterizedQueryBuilder {
 //                if (isSafeVariableInput(param)) {
 //                    preparedStatementPlaceHolders.add(v);
 //                } else {
-                parameters.add(param);
+                parameterGroup.add(param);
                 preparedStatementPlaceHolders.add(ParameterizedQuery.PREPARED_SQL_PARAM_PLACEHOLDER);
 //                }
             }
+            parameters.add(parameterGroup);
             preparedQueryBuilder.append(String.join(COMMA_SEPARATOR, preparedStatementPlaceHolders));
             preparedQueryBuilder.append(matchToLookBehindRawQuery);
             // Get template and raw query string from next variable
-            queryTemplate = queryTemplate.substring(currentVar.length() + matchToLookBehindRawQuery.length());
+            normalizedQueryTemplate = normalizedQueryTemplate.substring(currentVar.length() + matchToLookBehindRawQuery.length());
             rawQuery = rawQuery.substring(currentVarInput.length() + matchToLookBehindRawQuery.length());
 
-            varMatch = varPattern.matcher(queryTemplate);
+            varMatch = varPattern.matcher(normalizedQueryTemplate);
         }
-        if (!queryTemplate.equals(rawQuery)) {
+        if (!normalizedQueryTemplate.equals(rawQuery)) {
             throw new QueryMisMatch(QUERY_MISMATCH_EXCEPTION_MESSAGE);
         }
-        return new ParameterizedQuery(preparedQueryBuilder.toString(), parameters);
+        List<String> templateVariables = extractGrafanaVariables(queryTemplate);
+        return new ParameterizedQuery(preparedQueryBuilder.toString(), parameters, templateVariables);
+    }
+
+    private static List<String> extractGrafanaVariables(String queryTemplate) {
+        Pattern varPattern = Pattern.compile(QUOTED_STRING_REGEX + "|" + GRAFANA_VAR_REGEX);
+        Matcher varMatch = varPattern.matcher(queryTemplate);
+        List<String> grafanaVariables = new ArrayList<>();
+        while (varMatch.find()) {
+            String doubleQuoteVar = varMatch.group(DOUBLE_QUOTE_GROUP);
+            if (doubleQuoteVar != null) {
+                Matcher grafanaVarMatcher = Pattern.compile(GRAFANA_VAR_REGEX).matcher(doubleQuoteVar);
+                if (grafanaVarMatcher.find()) {
+                    grafanaVariables.add(doubleQuoteVar);
+                }
+                continue;
+            }
+            String singleQuoteVar = varMatch.group(SINGLE_QUOTE_GROUP);
+            if (singleQuoteVar != null) {
+                Matcher grafanaVarMatcher = Pattern.compile(GRAFANA_VAR_REGEX).matcher(singleQuoteVar);
+                if (grafanaVarMatcher.find()) {
+                    grafanaVariables.add(singleQuoteVar);
+                }
+                continue;
+            }
+            String unquoteVarType1 = varMatch.group(TOTAL_QUOTED_STRING_GROUPS + GRAFANA_VAR_TYPE1_GROUP);
+            if (unquoteVarType1 != null) {
+                grafanaVariables.add(unquoteVarType1);
+                continue;
+            }
+            String unquoteVarType2 = varMatch.group(TOTAL_QUOTED_STRING_GROUPS + GRAFANA_VAR_TYPE2_GROUP);
+            if (unquoteVarType2 != null) {
+                grafanaVariables.add(unquoteVarType2);
+            }
+        }
+        return grafanaVariables;
     }
 
     private static String[] splitByComma(String str) {
@@ -104,14 +152,13 @@ public class ParameterizedQueryBuilder {
 
     private static String templateParamWGrafanaVariables(String queryTemplate) {
         // TODO: handle escaped quotes and special characters
-        Pattern quotedStringPattern = Pattern.compile("(\"(.+?)\")|('(.+?)')");
+        Pattern quotedStringPattern = Pattern.compile(QUOTED_STRING_REGEX);
         Matcher quotedStringMatch = quotedStringPattern.matcher(queryTemplate);
         while(quotedStringMatch.find()) {
             String quotedString = quotedStringMatch.group();
             Matcher varMatcher = Pattern.compile(GRAFANA_VAR_REGEX).matcher(quotedString);
             // If grafana variable exists in single quoted string
             if(varMatcher.find()) {
-                String var = varMatcher.group();
                 String templatedQuotedString = templateQuotedString(quotedString);
                 // escape any special characters
                 templatedQuotedString = Matcher.quoteReplacement(templatedQuotedString);
