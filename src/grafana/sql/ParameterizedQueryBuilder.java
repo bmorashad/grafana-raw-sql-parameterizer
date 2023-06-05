@@ -53,7 +53,7 @@ public class ParameterizedQueryBuilder {
         rawQuery = rawQueryFromVarStart;
         Pattern varPattern = Pattern.compile(GRAFANA_QUOTED_VAR_REGEX + "|" + GRAFANA_VAR_REGEX);
         Matcher varMatch = varPattern.matcher(normalizedQueryTemplate);
-        List<List<String>> parameters = new ArrayList<>();
+        List<List<String>> variableInputs = new ArrayList<>();
         while(varMatch.find()) {
             String currentVar = varMatch.group();
             // Pattern matcher to get query string between grafana current variable and next variable
@@ -83,19 +83,19 @@ public class ParameterizedQueryBuilder {
             List<String> preparedStatementPlaceHolders = new ArrayList<>();
             // Group the inputs of a variable together in a List
             // This allows to map the inputs with variables correctly
-            List<String> parameterGroup = new ArrayList<>();
+            List<String> variableInputGroup = new ArrayList<>();
             for (String v : varValues) {
                 String param = unQuoteString(v);
-                // This makes sure to add the parameters only if the inputs are safe
+                // This makes sure to add the variableInputs only if the inputs are safe
                 // (I.E numbers || strings || empty)
 //                if (isSafeVariableInput(param)) {
 //                    preparedStatementPlaceHolders.add(v);
 //                } else {
-                parameterGroup.add(param);
+                variableInputGroup.add(param);
                 preparedStatementPlaceHolders.add(ParameterizedQuery.PREPARED_SQL_PARAM_PLACEHOLDER);
 //                }
             }
-            parameters.add(parameterGroup);
+            variableInputs.add(variableInputGroup);
             preparedQueryBuilder.append(String.join(COMMA_SEPARATOR, preparedStatementPlaceHolders));
             preparedQueryBuilder.append(matchToLookBehindRawQuery);
             // Get template and raw query string from next variable
@@ -108,7 +108,7 @@ public class ParameterizedQueryBuilder {
             throw new QueryMisMatch(QUERY_MISMATCH_EXCEPTION_MESSAGE);
         }
         List<String> templateVariables = extractGrafanaVariables(queryTemplate);
-        return new ParameterizedQuery(preparedQueryBuilder.toString(), parameters, templateVariables);
+        return new ParameterizedQuery(preparedQueryBuilder.toString(), variableInputs, templateVariables);
     }
 
     private static List<String> extractGrafanaVariables(String queryTemplate) {

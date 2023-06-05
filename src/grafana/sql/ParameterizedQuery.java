@@ -7,12 +7,12 @@ public class ParameterizedQuery {
     public static final String PREPARED_SQL_PARAM_PLACEHOLDER = "?";
 
     private String parameterizedSQL;
-    private List<List<String>> parameters;
+    private List<List<String>> varInputs;
     private List<String> variables;
 
-    public ParameterizedQuery(String parameterizedSQL, List<List<String>> parameters, List<String> variables) {
+    public ParameterizedQuery(String parameterizedSQL, List<List<String>> varInputs, List<String> variables) {
         this.parameterizedSQL = parameterizedSQL;
-        this.parameters = parameters;
+        this.varInputs = varInputs;
         this.variables = variables;
     }
 
@@ -24,12 +24,12 @@ public class ParameterizedQuery {
         this.parameterizedSQL = parameterizedSQL;
     }
 
-    public List<List<String>> getParameters() {
-        return parameters;
+    public List<List<String>> getVarInputs() {
+        return varInputs;
     }
 
-    public void setParameters(List<List<String>> parameters) {
-        this.parameters = parameters;
+    public void setVarInputs(List<List<String>> varInputs) {
+        this.varInputs = varInputs;
     }
 
     public List<String> getVariables() {
@@ -42,8 +42,8 @@ public class ParameterizedQuery {
 
     @Override
     public String toString() {
-        return "{\n parameterized_query: " + this.parameterizedSQL +
-                "\n parameters: " + this.parameters +
+        return "{\n parameterized_sql: " + this.parameterizedSQL +
+                "\n variable_inputs: " + this.varInputs +
                 "\n variables: " + this.variables + "\n}";
     }
 }
